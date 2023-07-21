@@ -4,7 +4,9 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.apache.commons.csv.CSVFormat;
@@ -19,68 +21,96 @@ public class FeriasService {
 	public String montaRelatorio(String csvFile) {
 
 		try (FileReader fileReader = new FileReader(csvFile);
-				CSVParser csvParser = new CSVParser(fileReader, CSVFormat.DEFAULT.withFirstRecordAsHeader().withDelimiter(';'))) {
+	             CSVParser csvParser = new CSVParser(fileReader, CSVFormat.DEFAULT.withFirstRecordAsHeader().withDelimiter(';'))) {
 
-			// Mapeamento para armazenar o total de dias de férias por mês para cada
-			// profissional
-			Map<String, Map<String, Integer>> feriasPorProfissionalEMes = new HashMap<>();
+	            // Mapeamento para armazenar o total de dias de férias por mês para cada profissional
+	            Map<String, Map<String, Integer>> feriasPorProfissionalEMes = new HashMap<>();
 
-			for (CSVRecord record : csvParser) {
-				String nome = record.get("Colaborador");
+	            for (CSVRecord record : csvParser) {
+	                String nome = record.get("Colaborador");
 
-				int numDiasParc1 = parsePositiveInt(record.get("Nº Dias Parc. 1"));
-				int numDiasParc2 = parsePositiveInt(record.get("Nº Dias Parc. 2"));
-				int numDiasParc3 = parsePositiveInt(record.get("Nº Dias Parc. 3"));
+	                List<PeriodoFerias> periodosFerias = new ArrayList<>();
+	                addPeriodoFerias(record, 1, periodosFerias);
+	                addPeriodoFerias(record, 2, periodosFerias);
+	                addPeriodoFerias(record, 3, periodosFerias);
 
-				LocalDate saidaParc1 = parseDate(record.get("Data Saída Parc. 1"));
-				LocalDate retornoParc1 = parseDate(record.get("Data Retorno Parc. 1"));
-				LocalDate saidaParc2 = parseDate(record.get("Data Saída Parc. 2"));
-				LocalDate retornoParc2 = parseDate(record.get("Data Retorno Parc. 2"));
-				LocalDate saidaParc3 = parseDate(record.get("Data Saída Parc. 3"));
-				LocalDate retornoParc3 = parseDate(record.get("Data Retorno Parc. 3"));
+	                for (PeriodoFerias periodoFerias : periodosFerias) {
+	                    calcularDiasFerias(nome, periodoFerias.getInicio(), periodoFerias.getFim(), periodoFerias.getNumDias(), feriasPorProfissionalEMes);
+	                }
+	            }
 
-				calcularDiasFerias(nome, saidaParc1, retornoParc1, numDiasParc1, feriasPorProfissionalEMes);
-				calcularDiasFerias(nome, saidaParc2, retornoParc2, numDiasParc2, feriasPorProfissionalEMes);
-				calcularDiasFerias(nome, saidaParc3, retornoParc3, numDiasParc3, feriasPorProfissionalEMes);
-			}
+	            // Construir a resposta no formato desejado
+	            StringBuilder responseBuilder = new StringBuilder();
+	            Map<String, ResultadoMes> resultadosPorMes = new HashMap<>();
 
-			// Construir a resposta no formato desejado
-			StringBuilder responseBuilder = new StringBuilder();
-			Map<String, ResultadoMes> resultadosPorMes = new HashMap<>();
+	            for (Map.Entry<String, Map<String, Integer>> entry : feriasPorProfissionalEMes.entrySet()) {
+	                String nomeProfissional = entry.getKey();
+	                Map<String, Integer> feriasPorMes = entry.getValue();
 
-			for (Map.Entry<String, Map<String, Integer>> entry : feriasPorProfissionalEMes.entrySet()) {
-				String nomeProfissional = entry.getKey();
-				Map<String, Integer> feriasPorMes = entry.getValue();
+	                for (Map.Entry<String, Integer> feriasMes : feriasPorMes.entrySet()) {
+	                    String mes = feriasMes.getKey();
+	                    int diasFerias = feriasMes.getValue();
 
-				for (Map.Entry<String, Integer> feriasMes : feriasPorMes.entrySet()) {
-					String mes = feriasMes.getKey();
-					int diasFerias = feriasMes.getValue();
+	                    resultadosPorMes.computeIfAbsent(mes, k -> new ResultadoMes(mes));
 
-					resultadosPorMes.computeIfAbsent(mes, k -> new ResultadoMes(mes));
+	                    ResultadoMes resultadoMes = resultadosPorMes.get(mes);
+	                    resultadoMes.addProfissional(nomeProfissional, diasFerias);
+	                }
+	            }
 
-					ResultadoMes resultadoMes = resultadosPorMes.get(mes);
-					resultadoMes.addProfissional(nomeProfissional, diasFerias);
-				}
-			}
+	            for (ResultadoMes resultadoMes : resultadosPorMes.values()) {
+	                responseBuilder.append(resultadoMes.getDescricao()).append(": ").append(resultadoMes.getTotalDias()).append(" dias\n");
+	                for (Map.Entry<String, Integer> profissionalEntry : resultadoMes.getProfissionais().entrySet()) {
+	                    String profissional = profissionalEntry.getKey();
+	                    int diasFerias = profissionalEntry.getValue();
+	                    responseBuilder.append("    ").append(profissional).append(" = ").append(diasFerias).append(" dias\n");
+	                }
+	            }
 
-			for (ResultadoMes resultadoMes : resultadosPorMes.values()) {
-				responseBuilder.append(resultadoMes.getDescricao()).append(": ").append(resultadoMes.getTotalDias())
-						.append(" dias\n");
-				for (Map.Entry<String, Integer> profissionalEntry : resultadoMes.getProfissionais().entrySet()) {
-					String profissional = profissionalEntry.getKey();
-					int diasFerias = profissionalEntry.getValue();
-					responseBuilder.append("    ").append(profissional).append(": ").append(diasFerias)
-							.append(" dias\n");
-				}
-			}
+	            return responseBuilder.toString();
 
-			return responseBuilder.toString();
-
-		} catch (IOException e) {
-			e.printStackTrace();
-			return "Erro ao processar o arquivo CSV.";
-		}
+	        } catch (IOException e) {
+	            e.printStackTrace();
+	            return "Erro ao processar o arquivo CSV.";
+	        }
 	}
+	
+	// Método auxiliar para adicionar os períodos de férias
+    private void addPeriodoFerias(CSVRecord record, int numeroPeriodo, List<PeriodoFerias> periodosFerias) {
+        LocalDate inicio = parseDate(record.get("Data Saída Parc. " + numeroPeriodo));
+        LocalDate retorno = parseDate(record.get("Data Retorno Parc. " + numeroPeriodo));
+        int numDias = parsePositiveInt(record.get("Nº Dias Parc. " + numeroPeriodo));
+
+        if (inicio != null && retorno != null && numDias > 0) {
+            periodosFerias.add(new PeriodoFerias(inicio, retorno, numDias));
+        }
+    }
+
+    // Classe auxiliar para representar os períodos de férias
+    private static class PeriodoFerias {
+        private final LocalDate inicio;
+        private final LocalDate fim;
+        private final int numDias;
+
+        public PeriodoFerias(LocalDate inicio, LocalDate fim, int numDias) {
+            this.inicio = inicio;
+            this.fim = fim;
+            this.numDias = numDias;
+        }
+
+        public LocalDate getInicio() {
+            return inicio;
+        }
+
+        public LocalDate getFim() {
+            return fim;
+        }
+
+        public int getNumDias() {
+            return numDias;
+        }
+    }
+
 
 	private static void calcularDiasFerias(String nome, LocalDate inicio, LocalDate fim, int numDias,
 			Map<String, Map<String, Integer>> feriasPorProfissionalEMes) {
