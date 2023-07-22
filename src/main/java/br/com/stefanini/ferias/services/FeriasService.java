@@ -3,6 +3,7 @@ package br.com.stefanini.ferias.services;
 import java.io.FileReader;
 import java.io.IOException;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -28,14 +29,18 @@ public class FeriasService {
 
 	            for (CSVRecord record : csvParser) {
 	                String nome = record.get("Colaborador");
+	                String situacao = record.get("Situação (Férias)");
 
-	                List<PeriodoFerias> periodosFerias = new ArrayList<>();
-	                addPeriodoFerias(record, 1, periodosFerias);
-	                addPeriodoFerias(record, 2, periodosFerias);
-	                addPeriodoFerias(record, 3, periodosFerias);
+	                if (situacao.equals("Parcial") || situacao.equals("Pendente")) {
+	                    List<PeriodoFerias> periodosFerias = new ArrayList<>();
+	                    
+	                    addPeriodoFerias(record, 1, periodosFerias);
+	                    addPeriodoFerias(record, 2, periodosFerias);
+	                    addPeriodoFerias(record, 3, periodosFerias);
 
-	                for (PeriodoFerias periodoFerias : periodosFerias) {
-	                    calcularDiasFerias(nome, periodoFerias.getInicio(), periodoFerias.getFim(), periodoFerias.getNumDias(), feriasPorProfissionalEMes);
+	                    for (PeriodoFerias periodoFerias : periodosFerias) {
+	                        calcularDiasFeriasPorMes(nome, periodoFerias, feriasPorProfissionalEMes);
+	                    }
 	                }
 	            }
 
@@ -73,7 +78,8 @@ public class FeriasService {
 	            e.printStackTrace();
 	            return "Erro ao processar o arquivo CSV.";
 	        }
-	}
+	    }
+
 	
 	// Método auxiliar para adicionar os períodos de férias
     private void addPeriodoFerias(CSVRecord record, int numeroPeriodo, List<PeriodoFerias> periodosFerias) {
@@ -85,6 +91,7 @@ public class FeriasService {
             periodosFerias.add(new PeriodoFerias(inicio, retorno, numDias));
         }
     }
+
 
     // Classe auxiliar para representar os períodos de férias
     private static class PeriodoFerias {
@@ -110,37 +117,56 @@ public class FeriasService {
             return numDias;
         }
     }
+    
+    private void calcularDiasFeriasPorMes(String nome, PeriodoFerias periodoFerias, Map<String, Map<String, Integer>> feriasPorProfissionalEMes) {
+        LocalDate inicio = periodoFerias.getInicio();
+        LocalDate fim = periodoFerias.getFim();
+        int numDias = periodoFerias.getNumDias();
 
+        int ano = inicio.getYear();
+        int mesInicio = inicio.getMonthValue();
+        int mesFim = fim.getMonthValue();
+        int diasUtilizados = 0;
 
-	private static void calcularDiasFerias(String nome, LocalDate inicio, LocalDate fim, int numDias,
-			Map<String, Map<String, Integer>> feriasPorProfissionalEMes) {
-		if (inicio != null && fim != null) {
-			LocalDate dataAtual = inicio;
-			while (!dataAtual.isAfter(fim)) {
-				String mes = getMesFormatado(dataAtual);
+        for (int mes = mesInicio; mes <= mesFim; mes++) {
+            YearMonth anoMes = YearMonth.of(ano, mes);
+            int diasMes = anoMes.lengthOfMonth();
+            int diaFinalDoMes = YearMonth.of(ano, mes).plusMonths(1).atDay(20).getDayOfMonth();
 
-				// Verificar se a data está dentro do período de férias considerando o mês de
-				// início no dia 21
-				if (dataAtual.getDayOfMonth() >= 21) {
-					// Armazenar os dias de férias para cada mês e cada profissional
-					feriasPorProfissionalEMes.computeIfAbsent(nome, k -> new HashMap<>());
-					feriasPorProfissionalEMes.get(nome).merge(mes, numDias, Integer::sum);
-				}
+            if (mes == mesInicio) {
+                // Ajusta o início para o primeiro dia do mês atual
+                inicio = inicio.withDayOfMonth(1);
+            } else {
+                // Ajusta o início para o dia 21 do mês atual
+                inicio = YearMonth.of(ano, mes).atDay(21);
+            }
 
-				dataAtual = dataAtual.plusDays(1);
-			}
-		}
-	}
+            if (mes == mesFim) {
+                // Verifica se o dia 20 é maior que o último dia do mês atual
+                if (diaFinalDoMes > diasMes) {
+                    // Ajusta o fim para o último dia do mês atual
+                    fim = YearMonth.of(ano, mes).atDay(diasMes);
+                } else {
+                    // Ajusta o fim para o dia 20 do mês atual
+                    fim = YearMonth.of(ano, mes).atDay(diaFinalDoMes);
+                }
+            } else {
+                // Ajusta o fim para o dia 20 do mês atual
+                fim = YearMonth.of(ano, mes).atDay(diaFinalDoMes);
+            }
 
-	private static String getMesFormatado(LocalDate date) {
-		LocalDate inicioMes = date.withDayOfMonth(21);
-		if (date.isBefore(inicioMes)) {
-			inicioMes = inicioMes.minusMonths(1);
-		}
-		int monthValue = inicioMes.getMonthValue();
-		int year = inicioMes.getYear();
-		return String.format("%02d/%d", monthValue, year);
-	}
+            int diasNoPeriodo = (int) inicio.datesUntil(fim.plusDays(1)).count();
+            int diasUtilizadosNoMes = Math.min(numDias, diasNoPeriodo);
+            diasUtilizados += diasUtilizadosNoMes;
+            numDias -= diasUtilizadosNoMes;
+        }
+
+        if (diasUtilizados > 0) {
+            String mesAno = mesFim + "/" + ano;
+            feriasPorProfissionalEMes.computeIfAbsent(nome, k -> new HashMap<>());
+            feriasPorProfissionalEMes.get(nome).merge(mesAno, diasUtilizados, Integer::sum);
+        }
+    }
 
 	private static LocalDate parseDate(String dateStr) {
 		try {
